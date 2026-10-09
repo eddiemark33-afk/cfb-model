@@ -18,6 +18,7 @@ schedule.
 
 from __future__ import annotations
 
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -238,6 +239,7 @@ def _fit_ratings(obs: pd.DataFrame, priors: pd.DataFrame) -> pd.DataFrame:
     """
     base = priors.copy()
     if obs.empty:
+        base.attrs["hfa"] = 0.0
         return base
 
     names = sorted(set(obs["team"]) | set(obs["opponent"]))
@@ -276,6 +278,8 @@ def _fit_ratings(obs: pd.DataFrame, priors: pd.DataFrame) -> pd.DataFrame:
     rated = base.copy()
     rated.loc[names, "prior_off"] = base.loc[names, "prior_off"].to_numpy() + coef[:n]
     rated.loc[names, "prior_def"] = base.loc[names, "prior_def"].to_numpy() + coef[n : 2 * n]
+    # Last column is the home dummy. Same units as off_rating / def_rating (PPA).
+    rated.attrs["hfa"] = float(coef[-1])
     return rated
 
 
@@ -327,6 +331,38 @@ def _compute_final(year: int) -> pd.DataFrame:
     obs, fbs_teams, priors, _weeks = _season_inputs(year)
     ratings = _fit_ratings(obs, priors)
     return _rating_frame(year, ratings, fbs_teams, week=None)[FINAL_COLUMNS]
+
+
+def home_field_term() -> float:
+    """Home-field coefficient from the ratings ridge, in PPA per game.
+
+    Each fit already estimates this as the home-dummy coefficient. Weekly
+    ratings do not store it, so this averages the end-of-sample coefficient
+    across seasons (weighted by team-games) and caches that one constant.
+    Margin conversion reuses the cached value instead of refitting.
+    """
+    path = DATA_DIR / "home_field.json"
+    if path.is_file():
+        return float(json.loads(path.read_text(encoding="utf-8"))["home_field_term"])
+
+    current_year = datetime.now().year
+    weighted_sum = 0.0
+    weight = 0
+    for year in range(FIRST_SEASON, current_year + 1):
+        obs, _fbs_teams, priors, _weeks = _season_inputs(year)
+        if obs.empty:
+            continue
+        ratings = _fit_ratings(obs, priors)
+        n_games = len(obs)
+        weighted_sum += float(ratings.attrs["hfa"]) * n_games
+        weight += n_games
+    if weight == 0:
+        raise RuntimeError("No games available to estimate the home-field term.")
+
+    value = weighted_sum / weight
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"home_field_term": value}), encoding="utf-8")
+    return value
 
 
 def get_weekly_ratings(year: int) -> pd.DataFrame:

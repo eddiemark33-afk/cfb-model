@@ -131,6 +131,7 @@ def load_team_ppa(year: int) -> pd.DataFrame:
         rows = cfbd.MetricsApi(_client()).get_predicted_points_added_by_game(
             year=year,
             classification=DivisionClassification.FBS,
+            exclude_garbage_time=True,
         )
         return _frame_from_models(rows)
 
