@@ -85,10 +85,20 @@ def select_moneyline(betting_lines_for_game: pd.DataFrame) -> dict | None:
                 "away_ml": _optional_float(row["awayMoneyline"]),
             }
 
-    chosen = {
-        "home_ml": _optional_float(usable["homeMoneyline"].mean(skipna=True)),
-        "away_ml": _optional_float(usable["awayMoneyline"].mean(skipna=True)),
-    }
+    # Mean of +102 and -110 is not a price. Average the implied probabilities,
+    # then turn that probability back into American odds.
+    def _to_american(probability: float) -> float:
+        decimal_odds = 1 / probability
+        if decimal_odds >= 2:
+            return (decimal_odds - 1) * 100
+        return -100 / (decimal_odds - 1)
+
+    chosen = {"home_ml": None, "away_ml": None}
+    for side, column in (("home_ml", "homeMoneyline"), ("away_ml", "awayMoneyline")):
+        posted = usable[column].dropna()
+        if posted.empty:
+            continue
+        chosen[side] = _to_american(float(posted.map(implied_prob).mean()))
     if chosen["home_ml"] is None and chosen["away_ml"] is None:
         return None
     return chosen
